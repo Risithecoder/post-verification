@@ -14,15 +14,17 @@ from __future__ import annotations
 
 import logging
 import json
+import time
 from typing import Sequence
 import concurrent.futures
 
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type,
+    before_sleep_log,
 )
 
 import config
@@ -54,9 +56,12 @@ def process_document(text: str, user_verification_prompt: str) -> str:
     if not text.strip():
         return ""
 
+    total_start = time.time()
+
     logger.info("Starting segmentation...")
+    seg_start = time.time()
     raw_segments = segment_document(text)
-    logger.info("Extracted %d segments.", len(raw_segments))
+    logger.info("Extracted %d segments in %.1fs.", len(raw_segments), time.time() - seg_start)
 
     segments = clean_segments(raw_segments)
     logger.info("Cleaned down to %d segments.", len(segments))
@@ -64,10 +69,14 @@ def process_document(text: str, user_verification_prompt: str) -> str:
     if not segments:
         return text
 
+    verify_start = time.time()
     verified_segments = process_in_batches(segments, user_verification_prompt)
+    logger.info("Batch verification completed in %.1fs.", time.time() - verify_start)
 
     # Reassemble
     verified_text = "\n\n".join(seg.get("segment_text", "").strip() for seg in verified_segments)
+
+    logger.info("Total processing time: %.1fs.", time.time() - total_start)
     return verified_text
 
 
@@ -101,9 +110,10 @@ Expected output format:
 """
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type(Exception),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=2, min=2, max=60),
+    retry=retry_if_exception_type((Exception,)),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
 def call_openai_json_segmenter(system_prompt: str, user_prompt: str) -> str:
@@ -184,7 +194,9 @@ def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int =
     def process_batch(idx_and_batch):
         idx, batch = idx_and_batch
         logger.info("Processing batch %d (out of %d)...", idx + 1, len(batches))
+        batch_start = time.time()
         verified_batch = _verify_batch(batch, user_prompt)
+        logger.info("Batch %d completed in %.1fs.", idx + 1, time.time() - batch_start)
         return idx, batch, verified_batch
 
     # Use ThreadPoolExecutor to run batches in parallel
@@ -244,9 +256,10 @@ Your output MUST be a JSON object containing a "verified_segments" array.
 """
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type(Exception),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=2, min=2, max=60),
+    retry=retry_if_exception_type((Exception,)),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
 def _call_openai_json_verifier(system_prompt: str, user_prompt: str) -> str:

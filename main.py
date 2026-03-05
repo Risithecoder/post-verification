@@ -11,6 +11,7 @@ FastAPI application entry point.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -132,7 +133,7 @@ async def upload_document(
 
     # ── 5. Correct content via OpenAI ─────────────────────────────────────────
     try:
-        verified_text = process_document(original_text, prompt)
+        verified_text = await asyncio.to_thread(process_document, original_text, prompt)
     except RuntimeError as exc:
         # Raised when API key is missing
         logger.error("Configuration error: %s", exc)
