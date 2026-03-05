@@ -191,11 +191,13 @@ def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int =
     
     batches = [segments[i:i + batch_size] for i in range(0, len(segments), batch_size)]
     
+    total_batches = len(batches)
+
     def process_batch(idx_and_batch):
         idx, batch = idx_and_batch
-        logger.info("Processing batch %d (out of %d)...", idx + 1, len(batches))
+        logger.info("Processing batch %d (out of %d)...", idx + 1, total_batches)
         batch_start = time.time()
-        verified_batch = _verify_batch(batch, user_prompt)
+        verified_batch = _verify_batch(batch, user_prompt, batch_idx=idx, total_batches=total_batches)
         logger.info("Batch %d completed in %.1fs.", idx + 1, time.time() - batch_start)
         return idx, batch, verified_batch
 
@@ -276,7 +278,7 @@ def _call_openai_json_verifier(system_prompt: str, user_prompt: str) -> str:
     )
     return response.choices[0].message.content.strip()
 
-def _verify_batch(batch: list[dict], user_instructions: str) -> list[dict]:
+def _verify_batch(batch: list[dict], user_instructions: str, batch_idx: int = 0, total_batches: int = 1) -> list[dict]:
     # Construct batch string
     batch_text = ""
     for seg in batch:
@@ -290,8 +292,31 @@ def _verify_batch(batch: list[dict], user_instructions: str) -> list[dict]:
     
     system_prompt = VERIFICATION_SYSTEM_PROMPT + "\n\nOutput a JSON object with a 'verified_segments' key containing the array."
     
+    # ── DEBUG: Log full input only for FIRST and LAST batch ───────────────────
+    is_first = (batch_idx == 0)
+    is_last = (batch_idx == total_batches - 1)
+    should_log = is_first or is_last
+    
+    if should_log:
+        label = "FIRST" if is_first else "LAST"
+        logger.info("=" * 80)
+        logger.info("[%s BATCH] INPUT — System Prompt:", label)
+        logger.info(system_prompt)
+        logger.info("-" * 80)
+        logger.info("[%s BATCH] INPUT — User Prompt:", label)
+        logger.info(full_prompt)
+        logger.info("=" * 80)
+    
     try:
         raw_json = _call_openai_json_verifier(system_prompt, full_prompt)
+        
+        # ── DEBUG: Log raw output only for FIRST and LAST batch ───────────────
+        if should_log:
+            logger.info("=" * 80)
+            logger.info("[%s BATCH] OUTPUT — Raw JSON from LLM:", label)
+            logger.info(raw_json)
+            logger.info("=" * 80)
+        
         data = json.loads(raw_json)
         
         if isinstance(data, dict):
