@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import json
 from typing import Sequence
+import concurrent.futures
 
 from openai import OpenAI
 from tenacity import (
@@ -175,15 +176,24 @@ def clean_segments(segments: list[dict]) -> list[dict]:
 # ── Internals: Batch Processing & Verification ─────────────────────────────────
 
 def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int = 10) -> list[dict]:
-    """Process segments in batches."""
+    """Process segments in batches concurrently."""
     verified_results = []
     
-    for i in range(0, len(segments), batch_size):
-        batch = segments[i:i + batch_size]
-        logger.info("Processing batch %d to %d (out of %d)...", i+1, i+len(batch), len(segments))
-        
+    batches = [segments[i:i + batch_size] for i in range(0, len(segments), batch_size)]
+    
+    def process_batch(idx_and_batch):
+        idx, batch = idx_and_batch
+        logger.info("Processing batch %d (out of %d)...", idx + 1, len(batches))
         verified_batch = _verify_batch(batch, user_prompt)
-        
+        return idx, batch, verified_batch
+
+    # Use ThreadPoolExecutor to run batches in parallel
+    results_by_batch = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        for result in executor.map(process_batch, enumerate(batches)):
+            results_by_batch.append(result)
+            
+    for idx, batch, verified_batch in results_by_batch:
         # Merge results, fallback to original if missing
         for original_seg in batch:
             sid = original_seg["segment_id"]
@@ -211,17 +221,24 @@ def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int =
     verified_results.sort(key=lambda x: x["segment_id"])
     return verified_results
 
-VERIFICATION_SYSTEM_PROMPT = """You are an expert document verifier.
-Your task is to apply the following user instructions to verify and correct document segments.
+VERIFICATION_SYSTEM_PROMPT = """You are the FINAL VERIFIER in an edtech verification console. This is the last step before publishing.
+Your job is to verify, format, or correct questions according strictly to the USER VERIFICATION INSTRUCTIONS.
+
+CRITICAL: The USER VERIFICATION INSTRUCTIONS (provided in the user prompt) take absolute precedence. If the user asks you to format, translate, tag, adjust tone, or modify the questions in any specific way, you MUST follow their instructions exactly, even if it contradicts the General Guidelines below.
+
+General Guidelines (apply unless overridden by user instructions):
+• Strict in using evidence-based judgement which is in line with the latest update of that concept or Act.
+• Exam-oriented (tight framing, no weird/AI phrasing)
+• Zero tolerance for conceptual errors
+• No guesswork: if a question cannot be reliably corrected, reject it silently and give back the exact given text without any changes
 
 Rules:
 - You will receive a list of segments, each prefixed with SEGMENT_ID: <id>.
-- Only correct incorrect information based on the user's prompt.
-- Do not invent new facts.
-- Preserve the structure of the segment.
+- Only modify the segments based on the user's prompt and guidelines.
+- Do not invent new facts unless the user prompt specifically asks you to.
 - Maintain the original segment IDs.
 - You MUST output your results as a JSON array of objects.
-- Each object must have "segment_id" (integer) and "segment_text" (string - the corrected text).
+- Each object must have "segment_id" (integer) and "segment_text" (string - the modified text).
 
 Your output MUST be a JSON object containing a "verified_segments" array.
 """
@@ -252,10 +269,11 @@ def _verify_batch(batch: list[dict], user_instructions: str) -> list[dict]:
     for seg in batch:
         batch_text += f"SEGMENT_ID: {seg['segment_id']}\n{seg['segment_text']}\n\n"
         
-    full_prompt = (
-        f"USER VERIFICATION INSTRUCTIONS:\n{user_instructions}\n\n"
-        f"SEGMENTS TO VERIFY:\n{batch_text}"
-    )
+    full_prompt = ""
+    if user_instructions and user_instructions.strip():
+        full_prompt += f"USER VERIFICATION INSTRUCTIONS:\n{user_instructions}\n\n"
+        
+    full_prompt += f"SEGMENTS TO VERIFY:\n{batch_text}"
     
     system_prompt = VERIFICATION_SYSTEM_PROMPT + "\n\nOutput a JSON object with a 'verified_segments' key containing the array."
     
