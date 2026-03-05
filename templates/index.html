@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DocCorrect — AI Document Proofreader</title>
+  <meta name="description"
+    content="Upload a .docx document and get grammar, clarity, and formatting corrections powered by AI." />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+
+<body>
+
+  <div class="card">
+    <div class="header">
+      <h1>DocCorrect</h1>
+      <p>Upload a <strong>.docx</strong> file and let AI correct grammar, improve clarity, and refine formatting.</p>
+    </div>
+
+    <form id="uploadForm" enctype="multipart/form-data">
+
+      <div class="dropzone" id="dropzone">
+        <span class="dropzone-icon">📄</span>
+        <div class="dropzone-text">
+          Drag &amp; drop your <strong>.docx</strong> file here<br />
+          or <strong>click to browse</strong>
+        </div>
+        <input type="file" name="file" id="fileInput" class="file-input"
+          accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+      </div>
+
+      <div class="file-info" id="fileInfo">
+        <span class="file-icon">📎</span>
+        <span class="file-name" id="fileName"></span>
+        <span class="file-size" id="fileSize"></span>
+        <button type="button" class="remove-btn" id="removeBtn" title="Remove file">✕</button>
+      </div>
+
+      <div class="prompt-container">
+        <label for="promptInput" style="display:block;margin-bottom:8px;font-weight:bold;color:#1e293b;">
+          Verification Instructions:
+        </label>
+        <textarea id="promptInput" name="prompt" rows="4" 
+          placeholder="e.g. Please fix any grammatical or conceptual errors. Focus on clarity and concise solutions."
+          style="width:100%;padding:12px;border:2px dashed #cbd5e1;border-radius:12px;font-family:inherit;font-size:14px;resize:vertical;"></textarea>
+      </div>
+
+      <button type="submit" class="upload-btn" id="uploadBtn" disabled>
+        Correct Document
+      </button>
+
+      <div class="progress-bar" id="progressBar">
+        <div class="fill" id="progressFill"></div>
+      </div>
+
+      <div class="status" id="status"></div>
+
+      <!-- View Changes button (shown after successful upload) -->
+      <a href="#" class="view-changes-btn" id="viewChangesBtn" style="display: none;">
+        🔍 View Changes
+      </a>
+    </form>
+
+    <div class="footer">
+      Max file size: {{ max_size_mb }} MB &middot; Only .docx files accepted
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const form = document.getElementById('uploadForm');
+      const dropzone = document.getElementById('dropzone');
+      const fileInput = document.getElementById('fileInput');
+      const fileInfo = document.getElementById('fileInfo');
+      const fileName = document.getElementById('fileName');
+      const fileSize = document.getElementById('fileSize');
+      const removeBtn = document.getElementById('removeBtn');
+      const uploadBtn = document.getElementById('uploadBtn');
+      const progressBar = document.getElementById('progressBar');
+      const progressFill = document.getElementById('progressFill');
+      const status = document.getElementById('status');
+
+      const MAX_SIZE_MB = Number("{{ max_size_mb }}");
+      const MAX_SIZE = MAX_SIZE_MB * 1024 * 1024;
+
+      function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(2) + ' MB';
+      }
+
+      function setStatus(msg, type) {
+        status.textContent = msg;
+        status.className = 'status ' + (type || '');
+      }
+
+      function showFileInfo(file) {
+        fileName.textContent = file.name;
+        fileSize.textContent = formatBytes(file.size);
+        fileInfo.classList.add('visible');
+        uploadBtn.disabled = false;
+      }
+
+      function clearFile() {
+        fileInput.value = '';
+        fileInfo.classList.remove('visible');
+        uploadBtn.disabled = true;
+        setStatus('', '');
+        progressBar.classList.remove('visible');
+        progressFill.style.width = '0%';
+      }
+
+      function validateFile(file) {
+        if (!file) return 'No file selected.';
+        if (!file.name.toLowerCase().endsWith('.docx'))
+          return 'Only .docx files are accepted.';
+        if (file.size > MAX_SIZE)
+          return `File exceeds the ${MAX_SIZE_MB} MB limit.`;
+        return null;
+      }
+
+      dropzone.addEventListener('click', () => fileInput.click());
+
+      ['dragenter', 'dragover'].forEach(evt =>
+        dropzone.addEventListener(evt, e => {
+          e.preventDefault();
+          dropzone.classList.add('dragover');
+        })
+      );
+
+      ['dragleave', 'drop'].forEach(evt =>
+        dropzone.addEventListener(evt, e => {
+          e.preventDefault();
+          dropzone.classList.remove('dragover');
+        })
+      );
+
+      dropzone.addEventListener('drop', e => {
+        const file = e.dataTransfer.files[0];
+        const err = validateFile(file);
+        if (err) { setStatus(err, 'error'); return; }
+        fileInput.files = e.dataTransfer.files;
+        showFileInfo(file);
+        setStatus('', '');
+      });
+
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files[0];
+        const err = validateFile(file);
+        if (err) { setStatus(err, 'error'); clearFile(); return; }
+        showFileInfo(file);
+        setStatus('', '');
+      });
+
+      removeBtn.addEventListener('click', clearFile);
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const file = fileInput.files[0];
+        const err = validateFile(file);
+        if (err) { setStatus(err, 'error'); return; }
+
+        uploadBtn.disabled = true;
+        uploadBtn.innerHTML = '<span class="spinner"></span> Processing…';
+        progressBar.classList.add('visible');
+        progressFill.style.width = '30%';
+        setStatus('Uploading and processing your document…', 'processing');
+
+        const formData = new FormData();
+        formData.append('file', file);
+        const userPrompt = document.getElementById('promptInput').value.trim();
+        if (userPrompt) {
+          formData.append('prompt', userPrompt);
+        }
+
+        try {
+          progressFill.style.width = '60%';
+
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData,
+          });
+
+          progressFill.style.width = '90%';
+
+          if (!res.ok) {
+            const data = await res.json().catch(() => null);
+            const detail = data?.detail || `Server error (${res.status})`;
+            throw new Error(detail);
+          }
+
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+
+          const disposition = res.headers.get('Content-Disposition') || '';
+          const match = disposition.match(/filename="?(.+?)"?$/);
+          a.download = match ? match[1] : 'corrected_document.docx';
+          a.href = url;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+
+          progressFill.style.width = '100%';
+          setStatus('✓ Corrected document downloaded successfully!', 'success');
+
+          // Show "View Changes" button
+          const comparisonId = res.headers.get('X-Comparison-Id');
+          if (comparisonId) {
+            const viewBtn = document.getElementById('viewChangesBtn');
+            viewBtn.href = '/comparison/' + comparisonId;
+            viewBtn.style.display = 'block';
+          }
+
+
+
+        } catch (error) {
+          setStatus('✕ ' + error.message, 'error');
+          progressBar.classList.remove('visible');
+        } finally {
+          uploadBtn.disabled = false;
+          uploadBtn.innerHTML = 'Correct Document';
+        }
+      });
+    })();
+  </script>
+
+</body>
+
+</html>

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DocCorrect — View Changes</title>
+    <style>
+        :root {
+            --bg: #0f0f0f;
+            --card-bg: #1a1a2e;
+            --border: #2a2a4a;
+            --text: #e0e0e0;
+            --text-muted: #888;
+            --accent: #6c63ff;
+            --added-bg: #1a3a1a;
+            --added-border: #2d6a2d;
+            --deleted-bg: #3a1a1a;
+            --deleted-border: #6a2d2d;
+            --hint-color: #666;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .header h1 {
+            font-size: 1.8rem;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            color: var(--text-muted);
+        }
+
+        .stats-bar {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.75rem 1.5rem;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.4rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        .diff-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        .diff-panel {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .diff-panel-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .diff-panel-header.original {
+            color: #ff6b6b;
+        }
+
+        .diff-panel-header.verified {
+            color: #51cf66;
+        }
+
+        .diff-panel-body {
+            padding: 1rem 1.5rem;
+            max-height: 70vh;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+
+        .diff-line {
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-bottom: 2px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .diff-deleted {
+            background: var(--deleted-bg);
+            border-left: 3px solid var(--deleted-border);
+        }
+
+        .diff-added {
+            background: var(--added-bg);
+            border-left: 3px solid var(--added-border);
+        }
+
+        .diff-hint {
+            color: var(--hint-color);
+            font-size: 0.75rem;
+        }
+
+        .back-btn {
+            display: inline-block;
+            margin-top: 2rem;
+            padding: 0.75rem 2rem;
+            background: var(--accent);
+            color: #fff;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+
+        .back-btn:hover {
+            opacity: 0.85;
+        }
+
+        @media (max-width: 768px) {
+            .diff-container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📝 Document Changes</h1>
+            <p>Side-by-side comparison of original and verified text</p>
+        </div>
+
+        <div class="stats-bar">
+            <div class="stat">
+                <div class="stat-value">{{ stats.additions }}</div>
+                <div class="stat-label">Additions</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ stats.deletions }}</div>
+                <div class="stat-label">Deletions</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ stats.total_original }}</div>
+                <div class="stat-label">Original Lines</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ stats.total_verified }}</div>
+                <div class="stat-label">Verified Lines</div>
+            </div>
+        </div>
+
+        <div class="diff-container">
+            <div class="diff-panel">
+                <div class="diff-panel-header original">📄 Original</div>
+                <div class="diff-panel-body">
+                    {{ original_html | safe }}
+                </div>
+            </div>
+            <div class="diff-panel">
+                <div class="diff-panel-header verified">✅ Verified</div>
+                <div class="diff-panel-body">
+                    {{ verified_html | safe }}
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align: center;">
+            <a href="/" class="back-btn">← Back to Upload</a>
+        </div>
+    </div>
+</body>
+
+</html>
