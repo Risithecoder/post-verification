@@ -41,7 +41,7 @@
         <label for="promptInput" style="display:block;margin-bottom:8px;font-weight:bold;color:#1e293b;">
           Verification Instructions:
         </label>
-        <textarea id="promptInput" name="prompt" rows="4" 
+        <textarea id="promptInput" name="prompt" rows="4"
           placeholder="e.g. Please fix any grammatical or conceptual errors. Focus on clarity and concise solutions."
           style="width:100%;padding:12px;border:2px dashed #cbd5e1;border-radius:12px;font-family:inherit;font-size:14px;resize:vertical;"></textarea>
       </div>
@@ -60,6 +60,27 @@
       <a href="#" class="view-changes-btn" id="viewChangesBtn" style="display: none;">
         🔍 View Changes
       </a>
+
+      <!-- Auto-generated logs section (Hidden initially) -->
+      <div id="logsContainer" class="logs-container" style="display: none; margin-top: 20px; text-align: left;">
+        <h3 style="margin-bottom: 10px; color: #1e293b; font-size: 16px;">Processing Logs</h3>
+        <div id="firstBatchLog" class="batch-log"
+          style="display: none; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 15px; max-height: 400px; overflow-y: auto;">
+          <h4
+            style="margin-top: 0; color: #475569; font-size: 14px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px;">
+            First Batch</h4>
+          <pre id="firstBatchContent"
+            style="white-space: pre-wrap; word-wrap: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; color: #334155; margin: 0;"></pre>
+        </div>
+        <div id="lastBatchLog" class="batch-log"
+          style="display: none; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; max-height: 400px; overflow-y: auto;">
+          <h4
+            style="margin-top: 0; color: #475569; font-size: 14px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px;">
+            Last Batch</h4>
+          <pre id="lastBatchContent"
+            style="white-space: pre-wrap; word-wrap: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; color: #334155; margin: 0;"></pre>
+        </div>
+      </div>
     </form>
 
     <div class="footer">
@@ -111,6 +132,12 @@
         setStatus('', '');
         progressBar.classList.remove('visible');
         progressFill.style.width = '0%';
+        document.getElementById('logsContainer').style.display = 'none';
+        document.getElementById('firstBatchLog').style.display = 'none';
+        document.getElementById('lastBatchLog').style.display = 'none';
+        document.getElementById('firstBatchContent').textContent = '';
+        document.getElementById('lastBatchContent').textContent = '';
+        document.getElementById('viewChangesBtn').style.display = 'none';
       }
 
       function validateFile(file) {
@@ -215,6 +242,38 @@
             const viewBtn = document.getElementById('viewChangesBtn');
             viewBtn.href = '/comparison/' + comparisonId;
             viewBtn.style.display = 'block';
+          }
+
+          // Show Logs
+          const debugLogsB64 = res.headers.get('X-Debug-Logs-B64');
+          if (debugLogsB64) {
+            try {
+              const logsJson = atob(debugLogsB64);
+              const logs = JSON.parse(logsJson);
+              
+              if (logs.first_batch || logs.last_batch) {
+                document.getElementById('logsContainer').style.display = 'block';
+                
+                if (logs.first_batch) {
+                  document.getElementById('firstBatchLog').style.display = 'block';
+                  let logContent = "=== INPUT ===\n\n" + logs.first_batch.user_prompt;
+                  logContent += "\n\n=== OUTPUT ===\n\n" + logs.first_batch.raw_output;
+                  document.getElementById('firstBatchContent').textContent = logContent;
+                }
+                
+                if (logs.last_batch && logs.last_batch.user_prompt !== (logs.first_batch && logs.first_batch.user_prompt)) {
+                  document.getElementById('lastBatchLog').style.display = 'block';
+                  let logContent = "=== INPUT ===\n\n" + logs.last_batch.user_prompt;
+                  logContent += "\n\n=== OUTPUT ===\n\n" + logs.last_batch.raw_output;
+                  document.getElementById('lastBatchContent').textContent = logContent;
+                } else if (logs.last_batch) {
+                  // Don't show redundant logs if there was only one batch
+                  document.getElementById('lastBatchLog').style.display = 'none';
+                }
+              }
+            } catch (err) {
+              console.error("Failed to parse logs", err);
+            }
           }
 
 

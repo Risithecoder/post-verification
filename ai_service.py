@@ -48,13 +48,13 @@ def _get_client() -> OpenAI:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def process_document(text: str, user_verification_prompt: str) -> str:
+def process_document(text: str, user_verification_prompt: str) -> dict:
     """
     Accept the full document text, segment it, verify it in batches,
-    and return the fully verified document text.
+    and return a dict with the fully verified document text and debug logs.
     """
     if not text.strip():
-        return ""
+        return {"text": "", "logs": {}}
 
     total_start = time.time()
 
@@ -67,17 +67,17 @@ def process_document(text: str, user_verification_prompt: str) -> str:
     logger.info("Cleaned down to %d segments.", len(segments))
 
     if not segments:
-        return text
+        return {"text": text, "logs": {}}
 
     verify_start = time.time()
-    verified_segments = process_in_batches(segments, user_verification_prompt)
+    verified_segments, logs = process_in_batches(segments, user_verification_prompt)
     logger.info("Batch verification completed in %.1fs.", time.time() - verify_start)
 
     # Reassemble
     verified_text = "\n\n".join(seg.get("segment_text", "").strip() for seg in verified_segments)
 
     logger.info("Total processing time: %.1fs.", time.time() - total_start)
-    return verified_text
+    return {"text": verified_text, "logs": logs}
 
 
 # ── Internals: Segmentation ───────────────────────────────────────────────────
@@ -185,21 +185,24 @@ def clean_segments(segments: list[dict]) -> list[dict]:
 
 # ── Internals: Batch Processing & Verification ─────────────────────────────────
 
-def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int = 10) -> list[dict]:
-    """Process segments in batches concurrently."""
+def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int = 10) -> tuple[list[dict], dict]:
+    """Process segments in batches concurrently and return (verified_results, logs)."""
     verified_results = []
     
     batches = [segments[i:i + batch_size] for i in range(0, len(segments), batch_size)]
     
     total_batches = len(batches)
+    captured_logs = {}
 
     def process_batch(idx_and_batch):
         idx, batch = idx_and_batch
         logger.info("Processing batch %d (out of %d)...", idx + 1, total_batches)
         batch_start = time.time()
-        verified_batch = _verify_batch(batch, user_prompt, batch_idx=idx, total_batches=total_batches)
+        
+        # Now _verify_batch returns (verified_batch_list, batch_log_dict)
+        verified_batch, batch_log = _verify_batch(batch, user_prompt, batch_idx=idx, total_batches=total_batches)
         logger.info("Batch %d completed in %.1fs.", idx + 1, time.time() - batch_start)
-        return idx, batch, verified_batch
+        return idx, batch, verified_batch, batch_log
 
     # Use ThreadPoolExecutor to run batches in parallel
     results_by_batch = []
@@ -207,7 +210,14 @@ def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int =
         for result in executor.map(process_batch, enumerate(batches)):
             results_by_batch.append(result)
             
-    for idx, batch, verified_batch in results_by_batch:
+    for idx, batch, verified_batch, batch_log in results_by_batch:
+        # Collect logs for the frontend
+        if batch_log:
+            if idx == 0:
+                captured_logs["first_batch"] = batch_log
+            if idx == total_batches - 1:
+                captured_logs["last_batch"] = batch_log
+
         # Merge results, fallback to original if missing
         for original_seg in batch:
             sid = original_seg["segment_id"]
@@ -233,7 +243,7 @@ def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int =
                 
     # Sort by segment_id just in case
     verified_results.sort(key=lambda x: x["segment_id"])
-    return verified_results
+    return verified_results, captured_logs
 
 VERIFICATION_SYSTEM_PROMPT = """You are the FINAL VERIFIER in an edtech verification console. This is the last step before publishing.
 Your job is to verify, format, or correct questions according strictly to the USER VERIFICATION INSTRUCTIONS.
@@ -278,7 +288,7 @@ def _call_openai_json_verifier(system_prompt: str, user_prompt: str) -> str:
     )
     return response.choices[0].message.content.strip()
 
-def _verify_batch(batch: list[dict], user_instructions: str, batch_idx: int = 0, total_batches: int = 1) -> list[dict]:
+def _verify_batch(batch: list[dict], user_instructions: str, batch_idx: int = 0, total_batches: int = 1) -> tuple[list[dict], dict | None]:
     # Construct batch string
     batch_text = ""
     for seg in batch:
@@ -291,6 +301,8 @@ def _verify_batch(batch: list[dict], user_instructions: str, batch_idx: int = 0,
     full_prompt += f"SEGMENTS TO VERIFY:\n{batch_text}"
     
     system_prompt = VERIFICATION_SYSTEM_PROMPT + "\n\nOutput a JSON object with a 'verified_segments' key containing the array."
+    
+    batch_log = None
     
     # ── DEBUG: Log full input only for FIRST and LAST batch ───────────────────
     is_first = (batch_idx == 0)
@@ -306,6 +318,12 @@ def _verify_batch(batch: list[dict], user_instructions: str, batch_idx: int = 0,
         logger.info("[%s BATCH] INPUT — User Prompt:", label)
         logger.info(full_prompt)
         logger.info("=" * 80)
+        batch_log = {
+            "type": label,
+            "system_prompt": system_prompt,
+            "user_prompt": full_prompt,
+            "raw_output": ""
+        }
     
     try:
         raw_json = _call_openai_json_verifier(system_prompt, full_prompt)
@@ -316,21 +334,23 @@ def _verify_batch(batch: list[dict], user_instructions: str, batch_idx: int = 0,
             logger.info("[%s BATCH] OUTPUT — Raw JSON from LLM:", label)
             logger.info(raw_json)
             logger.info("=" * 80)
+            if batch_log:
+                batch_log["raw_output"] = raw_json
         
         data = json.loads(raw_json)
         
         if isinstance(data, dict):
             if "verified_segments" in data:
-                return data["verified_segments"]
+                return data["verified_segments"], batch_log
             for k, v in data.items():
                 if isinstance(v, list):
-                    return v
-            return []
+                    return v, batch_log
+            return [], batch_log
         elif isinstance(data, list):
-            return data
-        return []
+            return data, batch_log
+        return [], batch_log
     except Exception:
         logger.exception("Verification batch failed.")
-        return []
+        return [], batch_log
 
 

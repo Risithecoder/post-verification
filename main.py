@@ -133,7 +133,9 @@ async def upload_document(
 
     # ── 5. Correct content via OpenAI ─────────────────────────────────────────
     try:
-        verified_text = await asyncio.to_thread(process_document, original_text, prompt)
+        process_result = await asyncio.to_thread(process_document, original_text, prompt)
+        verified_text = process_result.get("text", "")
+        debug_logs = process_result.get("logs", {})
     except RuntimeError as exc:
         # Raised when API key is missing
         logger.error("Configuration error: %s", exc)
@@ -165,17 +167,26 @@ async def upload_document(
 
     # ── 7. Return the file for download ───────────────────────────────────────
     original_stem = Path(file.filename).stem
-    download_name = f"corrected_{original_stem}.docx"
-
-    logger.info("Returning corrected document: %s", download_name)
+    # Prepare the download response
+    import json
+    import base64
+    safe_filename = file.filename.replace('"', '\\"') if file.filename else "corrected_document.docx"
+    
+    headers = {
+        "Content-Disposition": f'attachment; filename="verified_{safe_filename}"',
+        "X-Comparison-Id": comparison_id,
+    }
+    
+    if debug_logs:
+        # Base64 encode the logs so we don't break HTTP header restrictions
+        logs_json_str = json.dumps(debug_logs)
+        logs_b64 = base64.b64encode(logs_json_str.encode("utf-8")).decode("ascii")
+        headers["X-Debug-Logs-B64"] = logs_b64
 
     return StreamingResponse(
         doc_buffer,
-        media_type=config.ALLOWED_CONTENT_TYPE,
-        headers={
-            "Content-Disposition": f'attachment; filename="{download_name}"',
-            "X-Comparison-Id": comparison_id,
-        },
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=headers,
     )
 
 
