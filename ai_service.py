@@ -185,7 +185,7 @@ def clean_segments(segments: list[dict]) -> list[dict]:
 
 # ── Internals: Batch Processing & Verification ─────────────────────────────────
 
-def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int = 10) -> tuple[list[dict], dict]:
+def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int = 5) -> tuple[list[dict], dict]:
     """Process segments in batches concurrently and return (verified_results, logs)."""
     verified_results = []
     
