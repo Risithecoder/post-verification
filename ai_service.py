@@ -206,7 +206,7 @@ def process_in_batches(segments: list[dict], user_prompt: str, batch_size: int =
 
     # Use ThreadPoolExecutor to run batches in parallel
     results_by_batch = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         for result in executor.map(process_batch, enumerate(batches)):
             results_by_batch.append(result)
             
@@ -276,17 +276,21 @@ Your output MUST be a JSON object containing a "verified_segments" array.
 )
 def _call_openai_json_verifier(system_prompt: str, user_prompt: str) -> str:
     client = _get_client()
-    response = client.chat.completions.create(
-        model=config.OPENAI_MODEL,
-        temperature=0.0,
-        top_p=1.0,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-    )
-    return response.choices[0].message.content.strip()
+    try:
+        response = client.chat.completions.create(
+            model=config.OPENAI_MODEL,
+            temperature=0.0,
+            top_p=1.0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        return response.choices[0].message.content.strip()
+    except RateLimitError as e:
+        logger.error("Caught RateLimitError from OpenAI: %s", e)
+        raise RuntimeError("FOOKIN!! rateLIMIT error :(") from e
 
 def _verify_batch(batch: list[dict], user_instructions: str, batch_idx: int = 0, total_batches: int = 1) -> tuple[list[dict], dict | None]:
     # Construct batch string
